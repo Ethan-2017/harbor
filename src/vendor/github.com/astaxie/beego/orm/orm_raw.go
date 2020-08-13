@@ -150,8 +150,10 @@ func (o *rawSet) setFieldValue(ind reflect.Value, value interface{}) {
 	case reflect.Struct:
 		if value == nil {
 			ind.Set(reflect.Zero(ind.Type()))
-
-		} else if _, ok := ind.Interface().(time.Time); ok {
+			return
+		}
+		switch ind.Interface().(type) {
+		case time.Time:
 			var str string
 			switch d := value.(type) {
 			case time.Time:
@@ -178,7 +180,25 @@ func (o *rawSet) setFieldValue(ind reflect.Value, value interface{}) {
 					}
 				}
 			}
+		case sql.NullString, sql.NullInt64, sql.NullFloat64, sql.NullBool:
+			indi := reflect.New(ind.Type()).Interface()
+			sc, ok := indi.(sql.Scanner)
+			if !ok {
+				return
+			}
+			err := sc.Scan(value)
+			if err == nil {
+				ind.Set(reflect.Indirect(reflect.ValueOf(sc)))
+			}
 		}
+
+	case reflect.Ptr:
+		if value == nil {
+			ind.Set(reflect.Zero(ind.Type()))
+			break
+		}
+		ind.Set(reflect.New(ind.Type().Elem()))
+		o.setFieldValue(reflect.Indirect(ind), value)
 	}
 }
 
@@ -286,7 +306,7 @@ func (o *rawSet) QueryRow(containers ...interface{}) error {
 
 			structMode = true
 			fn := getFullName(typ)
-			if mi, ok := modelCache.getByFN(fn); ok {
+			if mi, ok := modelCache.getByFullName(fn); ok {
 				sMi = mi
 			}
 		} else {
@@ -342,20 +362,23 @@ func (o *rawSet) QueryRow(containers ...interface{}) error {
 				for _, col := range columns {
 					if fi := sMi.fields.GetByColumn(col); fi != nil {
 						value := reflect.ValueOf(columnsMp[col]).Elem().Interface()
-						o.setFieldValue(ind.FieldByIndex(fi.fieldIndex), value)
+						field := ind.FieldByIndex(fi.fieldIndex)
+						if fi.fieldType&IsRelField > 0 {
+							mf := reflect.New(fi.relModelInfo.addrField.Elem().Type())
+							field.Set(mf)
+							field = mf.Elem().FieldByIndex(fi.relModelInfo.fields.pk.fieldIndex)
+						}
+						o.setFieldValue(field, value)
 					}
 				}
 			} else {
 				for i := 0; i < ind.NumField(); i++ {
 					f := ind.Field(i)
 					fe := ind.Type().Field(i)
-
-					var attrs map[string]bool
-					var tags map[string]string
-					parseStructTag(fe.Tag.Get("orm"), &attrs, &tags)
+					_, tags := parseStructTag(fe.Tag.Get(defaultStructTagName))
 					var col string
-					if col = tags["column"]; len(col) == 0 {
-						col = snakeString(fe.Name)
+					if col = tags["column"]; col == "" {
+						col = nameStrategyMap[nameStrategy](fe.Name)
 					}
 					if v, ok := columnsMp[col]; ok {
 						value := reflect.ValueOf(v).Elem().Interface()
@@ -416,7 +439,7 @@ func (o *rawSet) QueryRows(containers ...interface{}) (int64, error) {
 
 			structMode = true
 			fn := getFullName(typ)
-			if mi, ok := modelCache.getByFN(fn); ok {
+			if mi, ok := modelCache.getByFullName(fn); ok {
 				sMi = mi
 			}
 		} else {
@@ -480,26 +503,43 @@ func (o *rawSet) QueryRows(containers ...interface{}) (int64, error) {
 				for _, col := range columns {
 					if fi := sMi.fields.GetByColumn(col); fi != nil {
 						value := reflect.ValueOf(columnsMp[col]).Elem().Interface()
-						o.setFieldValue(ind.FieldByIndex(fi.fieldIndex), value)
+						field := ind.FieldByIndex(fi.fieldIndex)
+						if fi.fieldType&IsRelField > 0 {
+							mf := reflect.New(fi.relModelInfo.addrField.Elem().Type())
+							field.Set(mf)
+							field = mf.Elem().FieldByIndex(fi.relModelInfo.fields.pk.fieldIndex)
+						}
+						o.setFieldValue(field, value)
 					}
 				}
 			} else {
-				for i := 0; i < ind.NumField(); i++ {
-					f := ind.Field(i)
-					fe := ind.Type().Field(i)
+				// define recursive function
+				var recursiveSetField func(rv reflect.Value)
+				recursiveSetField = func(rv reflect.Value) {
+					for i := 0; i < rv.NumField(); i++ {
+						f := rv.Field(i)
+						fe := rv.Type().Field(i)
 
-					var attrs map[string]bool
-					var tags map[string]string
-					parseStructTag(fe.Tag.Get("orm"), &attrs, &tags)
-					var col string
-					if col = tags["column"]; len(col) == 0 {
-						col = snakeString(fe.Name)
-					}
-					if v, ok := columnsMp[col]; ok {
-						value := reflect.ValueOf(v).Elem().Interface()
-						o.setFieldValue(f, value)
+						// check if the field is a Struct
+						// recursive the Struct type
+						if fe.Type.Kind() == reflect.Struct {
+							recursiveSetField(f)
+						}
+
+						_, tags := parseStructTag(fe.Tag.Get(defaultStructTagName))
+						var col string
+						if col = tags["column"]; col == "" {
+							col = nameStrategyMap[nameStrategy](fe.Name)
+						}
+						if v, ok := columnsMp[col]; ok {
+							value := reflect.ValueOf(v).Elem().Interface()
+							o.setFieldValue(f, value)
+						}
 					}
 				}
+
+				// init call the recursive function
+				recursiveSetField(ind)
 			}
 
 			if eTyps[0].Kind() == reflect.Ptr {
@@ -665,7 +705,7 @@ func (o *rawSet) queryRowsTo(container interface{}, keyCol, valueCol string) (in
 		ind  *reflect.Value
 	)
 
-	typ := 0
+	var typ int
 	switch container.(type) {
 	case *Params:
 		typ = 1

@@ -15,6 +15,7 @@
 package orm
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"reflect"
@@ -60,6 +61,8 @@ var (
 		"sqlite3":  DRSqlite,
 		"tidb":     DRTiDB,
 		"oracle":   DROracle,
+		"oci8":     DROracle, // github.com/mattn/go-oci8
+		"ora":      DROracle, //https://github.com/rana/ora
 	}
 	dbBasers = map[DriverType]dbBaser{
 		DRMySQL:    newdbBaseMysql(),
@@ -80,7 +83,7 @@ type _dbCache struct {
 func (ac *_dbCache) add(name string, al *alias) (added bool) {
 	ac.mux.Lock()
 	defer ac.mux.Unlock()
-	if _, ok := ac.cache[name]; ok == false {
+	if _, ok := ac.cache[name]; !ok {
 		ac.cache[name] = al
 		added = true
 	}
@@ -101,6 +104,96 @@ func (ac *_dbCache) getDefault() (al *alias) {
 	return
 }
 
+type DB struct {
+	*sync.RWMutex
+	DB    *sql.DB
+	stmts map[string]*sql.Stmt
+}
+
+func (d *DB) Begin() (*sql.Tx, error) {
+	return d.DB.Begin()
+}
+
+func (d *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return d.DB.BeginTx(ctx, opts)
+}
+
+func (d *DB) getStmt(query string) (*sql.Stmt, error) {
+	d.RLock()
+	if stmt, ok := d.stmts[query]; ok {
+		d.RUnlock()
+		return stmt, nil
+	}
+	d.RUnlock()
+
+	stmt, err := d.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	d.Lock()
+	d.stmts[query] = stmt
+	d.Unlock()
+	return stmt, nil
+}
+
+func (d *DB) Prepare(query string) (*sql.Stmt, error) {
+	return d.DB.Prepare(query)
+}
+
+func (d *DB) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	return d.DB.PrepareContext(ctx, query)
+}
+
+func (d *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
+	stmt, err := d.getStmt(query)
+	if err != nil {
+		return nil, err
+	}
+	return stmt.Exec(args...)
+}
+
+func (d *DB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	stmt, err := d.getStmt(query)
+	if err != nil {
+		return nil, err
+	}
+	return stmt.ExecContext(ctx, args...)
+}
+
+func (d *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
+	stmt, err := d.getStmt(query)
+	if err != nil {
+		return nil, err
+	}
+	return stmt.Query(args...)
+}
+
+func (d *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	stmt, err := d.getStmt(query)
+	if err != nil {
+		return nil, err
+	}
+	return stmt.QueryContext(ctx, args...)
+}
+
+func (d *DB) QueryRow(query string, args ...interface{}) *sql.Row {
+	stmt, err := d.getStmt(query)
+	if err != nil {
+		panic(err)
+	}
+	return stmt.QueryRow(args...)
+
+}
+
+func (d *DB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+
+	stmt, err := d.getStmt(query)
+	if err != nil {
+		panic(err)
+	}
+	return stmt.QueryRowContext(ctx, args)
+}
+
 type alias struct {
 	Name         string
 	Driver       DriverType
@@ -108,7 +201,7 @@ type alias struct {
 	DataSource   string
 	MaxIdleConns int
 	MaxOpenConns int
-	DB           *sql.DB
+	DB           *DB
 	DbBaser      dbBaser
 	TZ           *time.Location
 	Engine       string
@@ -117,7 +210,7 @@ type alias struct {
 func detectTZ(al *alias) {
 	// orm timezone system match database
 	// default use Local
-	al.TZ = time.Local
+	al.TZ = DefaultTimeLoc
 
 	if al.DriverName == "sphinx" {
 		return
@@ -134,7 +227,9 @@ func detectTZ(al *alias) {
 			}
 			t, err := time.Parse("-07:00:00", tz)
 			if err == nil {
-				al.TZ = t.Location()
+				if t.Location().String() != "" {
+					al.TZ = t.Location()
+				}
 			} else {
 				DebugLog.Printf("Detect DB timezone: %s %s\n", tz, err.Error())
 			}
@@ -172,7 +267,11 @@ func addAliasWthDB(aliasName, driverName string, db *sql.DB) (*alias, error) {
 	al := new(alias)
 	al.Name = aliasName
 	al.DriverName = driverName
-	al.DB = db
+	al.DB = &DB{
+		RWMutex: new(sync.RWMutex),
+		DB:      db,
+		stmts:   make(map[string]*sql.Stmt),
+	}
 
 	if dr, ok := drivers[driverName]; ok {
 		al.DbBaser = dbBasers[dr]
@@ -186,7 +285,7 @@ func addAliasWthDB(aliasName, driverName string, db *sql.DB) (*alias, error) {
 		return nil, fmt.Errorf("register db Ping `%s`, %s", aliasName, err.Error())
 	}
 
-	if dataBaseCache.add(aliasName, al) == false {
+	if !dataBaseCache.add(aliasName, al) {
 		return nil, fmt.Errorf("DataBase alias name `%s` already registered, cannot reuse", aliasName)
 	}
 
@@ -244,11 +343,11 @@ end:
 
 // RegisterDriver Register a database driver use specify driver name, this can be definition the driver is which database type.
 func RegisterDriver(driverName string, typ DriverType) error {
-	if t, ok := drivers[driverName]; ok == false {
+	if t, ok := drivers[driverName]; !ok {
 		drivers[driverName] = typ
 	} else {
 		if t != typ {
-			return fmt.Errorf("driverName `%s` db driver already registered and is other type\n", driverName)
+			return fmt.Errorf("driverName `%s` db driver already registered and is other type", driverName)
 		}
 	}
 	return nil
@@ -259,7 +358,7 @@ func SetDataBaseTZ(aliasName string, tz *time.Location) error {
 	if al, ok := dataBaseCache.get(aliasName); ok {
 		al.TZ = tz
 	} else {
-		return fmt.Errorf("DataBase alias name `%s` not registered\n", aliasName)
+		return fmt.Errorf("DataBase alias name `%s` not registered", aliasName)
 	}
 	return nil
 }
@@ -268,7 +367,7 @@ func SetDataBaseTZ(aliasName string, tz *time.Location) error {
 func SetMaxIdleConns(aliasName string, maxIdleConns int) {
 	al := getDbAlias(aliasName)
 	al.MaxIdleConns = maxIdleConns
-	al.DB.SetMaxIdleConns(maxIdleConns)
+	al.DB.DB.SetMaxIdleConns(maxIdleConns)
 }
 
 // SetMaxOpenConns Change the max open conns for *sql.DB, use specify database alias name
@@ -292,7 +391,7 @@ func GetDB(aliasNames ...string) (*sql.DB, error) {
 	}
 	al, ok := dataBaseCache.get(name)
 	if ok {
-		return al.DB, nil
+		return al.DB.DB, nil
 	}
-	return nil, fmt.Errorf("DataBase of alias name `%s` not found\n", name)
+	return nil, fmt.Errorf("DataBase of alias name `%s` not found", name)
 }

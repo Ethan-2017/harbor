@@ -110,25 +110,25 @@ func (bc *MemoryCache) Delete(name string) error {
 // Incr increase cache counter in memory.
 // it supports int,int32,int64,uint,uint32,uint64.
 func (bc *MemoryCache) Incr(key string) error {
-	bc.RLock()
-	defer bc.RUnlock()
+	bc.Lock()
+	defer bc.Unlock()
 	itm, ok := bc.items[key]
 	if !ok {
 		return errors.New("key not exist")
 	}
-	switch itm.val.(type) {
+	switch val := itm.val.(type) {
 	case int:
-		itm.val = itm.val.(int) + 1
+		itm.val = val + 1
 	case int32:
-		itm.val = itm.val.(int32) + 1
+		itm.val = val + 1
 	case int64:
-		itm.val = itm.val.(int64) + 1
+		itm.val = val + 1
 	case uint:
-		itm.val = itm.val.(uint) + 1
+		itm.val = val + 1
 	case uint32:
-		itm.val = itm.val.(uint32) + 1
+		itm.val = val + 1
 	case uint64:
-		itm.val = itm.val.(uint64) + 1
+		itm.val = val + 1
 	default:
 		return errors.New("item val is not (u)int (u)int32 (u)int64")
 	}
@@ -137,34 +137,34 @@ func (bc *MemoryCache) Incr(key string) error {
 
 // Decr decrease counter in memory.
 func (bc *MemoryCache) Decr(key string) error {
-	bc.RLock()
-	defer bc.RUnlock()
+	bc.Lock()
+	defer bc.Unlock()
 	itm, ok := bc.items[key]
 	if !ok {
 		return errors.New("key not exist")
 	}
-	switch itm.val.(type) {
+	switch val := itm.val.(type) {
 	case int:
-		itm.val = itm.val.(int) - 1
+		itm.val = val - 1
 	case int64:
-		itm.val = itm.val.(int64) - 1
+		itm.val = val - 1
 	case int32:
-		itm.val = itm.val.(int32) - 1
+		itm.val = val - 1
 	case uint:
-		if itm.val.(uint) > 0 {
-			itm.val = itm.val.(uint) - 1
+		if val > 0 {
+			itm.val = val - 1
 		} else {
 			return errors.New("item val is less than 0")
 		}
 	case uint32:
-		if itm.val.(uint32) > 0 {
-			itm.val = itm.val.(uint32) - 1
+		if val > 0 {
+			itm.val = val - 1
 		} else {
 			return errors.New("item val is less than 0")
 		}
 	case uint64:
-		if itm.val.(uint64) > 0 {
-			itm.val = itm.val.(uint64) - 1
+		if val > 0 {
+			itm.val = val - 1
 		} else {
 			return errors.New("item val is less than 0")
 		}
@@ -203,13 +203,17 @@ func (bc *MemoryCache) StartAndGC(config string) error {
 	dur := time.Duration(cf["interval"]) * time.Second
 	bc.Every = cf["interval"]
 	bc.dur = dur
-	go bc.vaccuum()
+	go bc.vacuum()
 	return nil
 }
 
 // check expiration.
-func (bc *MemoryCache) vaccuum() {
-	if bc.Every < 1 {
+func (bc *MemoryCache) vacuum() {
+	bc.RLock()
+	every := bc.Every
+	bc.RUnlock()
+
+	if every < 1 {
 		return
 	}
 	for {
@@ -217,26 +221,31 @@ func (bc *MemoryCache) vaccuum() {
 		if bc.items == nil {
 			return
 		}
-		for name := range bc.items {
-			bc.itemExpired(name)
+		if keys := bc.expiredKeys(); len(keys) != 0 {
+			bc.clearItems(keys)
 		}
 	}
 }
 
-// itemExpired returns true if an item is expired.
-func (bc *MemoryCache) itemExpired(name string) bool {
+// expiredKeys returns key list which are expired.
+func (bc *MemoryCache) expiredKeys() (keys []string) {
+	bc.RLock()
+	defer bc.RUnlock()
+	for key, itm := range bc.items {
+		if itm.isExpire() {
+			keys = append(keys, key)
+		}
+	}
+	return
+}
+
+// clearItems removes all the items which key in keys.
+func (bc *MemoryCache) clearItems(keys []string) {
 	bc.Lock()
 	defer bc.Unlock()
-
-	itm, ok := bc.items[name]
-	if !ok {
-		return true
+	for _, key := range keys {
+		delete(bc.items, key)
 	}
-	if itm.isExpire() {
-		delete(bc.items, name)
-		return true
-	}
-	return false
 }
 
 func init() {

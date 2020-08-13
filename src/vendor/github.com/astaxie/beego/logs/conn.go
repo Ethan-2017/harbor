@@ -63,7 +63,7 @@ func (c *connWriter) WriteMsg(when time.Time, msg string, level int) error {
 		defer c.innerWriter.Close()
 	}
 
-	c.lg.println(when, msg)
+	c.lg.writeln(when, msg)
 	return nil
 }
 
@@ -113,5 +113,5 @@ func (c *connWriter) needToConnectOnMsg() bool {
 }
 
 func init() {
-	Register("conn", NewConn)
+	Register(AdapterConn, NewConn)
 }

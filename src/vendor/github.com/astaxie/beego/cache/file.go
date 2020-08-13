@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -61,11 +62,14 @@ func NewFileCache() Cache {
 }
 
 // StartAndGC will start and begin gc for file cache.
-// the config need to be like {CachePath:"/cache","FileSuffix":".bin","DirectoryLevel":2,"EmbedExpiry":0}
+// the config need to be like {CachePath:"/cache","FileSuffix":".bin","DirectoryLevel":"2","EmbedExpiry":"0"}
 func (fc *FileCache) StartAndGC(config string) error {
 
-	var cfg map[string]string
-	json.Unmarshal([]byte(config), &cfg)
+	cfg := make(map[string]string)
+	err := json.Unmarshal([]byte(config), &cfg)
+	if err != nil {
+		return err
+	}
 	if _, ok := cfg["CachePath"]; !ok {
 		cfg["CachePath"] = FileCachePath
 	}
@@ -141,12 +145,12 @@ func (fc *FileCache) GetMulti(keys []string) []interface{} {
 
 // Put value into file cache.
 // timeout means how long to keep this file, unit of ms.
-// if timeout equals FileCacheEmbedExpiry(default is 0), cache this item forever.
+// if timeout equals fc.EmbedExpiry(default is 0), cache this item forever.
 func (fc *FileCache) Put(key string, val interface{}, timeout time.Duration) error {
 	gob.Register(val)
 
 	item := FileCacheItem{Data: val}
-	if timeout == FileCacheEmbedExpiry {
+	if timeout == time.Duration(fc.EmbedExpiry) {
 		item.Expired = time.Now().Add((86400 * 365 * 10) * time.Second) // ten years
 	} else {
 		item.Expired = time.Now().Add(timeout)
@@ -178,7 +182,7 @@ func (fc *FileCache) Incr(key string) error {
 	} else {
 		incr = data.(int) + 1
 	}
-	fc.Put(key, incr, FileCacheEmbedExpiry)
+	fc.Put(key, incr, time.Duration(fc.EmbedExpiry))
 	return nil
 }
 
@@ -191,7 +195,7 @@ func (fc *FileCache) Decr(key string) error {
 	} else {
 		decr = data.(int) - 1
 	}
-	fc.Put(key, decr, FileCacheEmbedExpiry)
+	fc.Put(key, decr, time.Duration(fc.EmbedExpiry))
 	return nil
 }
 
@@ -222,33 +226,13 @@ func exists(path string) (bool, error) {
 // FileGetContents Get bytes to file.
 // if non-exist, create this file.
 func FileGetContents(filename string) (data []byte, e error) {
-	f, e := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, os.ModePerm)
-	if e != nil {
-		return
-	}
-	defer f.Close()
-	stat, e := f.Stat()
-	if e != nil {
-		return
-	}
-	data = make([]byte, stat.Size())
-	result, e := f.Read(data)
-	if e != nil || int64(result) != stat.Size() {
-		return nil, e
-	}
-	return
+	return ioutil.ReadFile(filename)
 }
 
 // FilePutContents Put bytes to file.
 // if non-exist, create this file.
 func FilePutContents(filename string, content []byte) error {
-	fp, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, os.ModePerm)
-	if err != nil {
-		return err
-	}
-	defer fp.Close()
-	_, err = fp.Write(content)
-	return err
+	return ioutil.WriteFile(filename, content, os.ModePerm)
 }
 
 // GobEncode Gob encodes file cache item.

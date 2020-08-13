@@ -1,4 +1,4 @@
-# Copyright 2017 VMware, Inc. All Rights Reserved.
+# Copyright Project Harbor Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,10 +32,10 @@ ${ova_network_options}  --prop:network.ip0=${ova_network_ip0} --prop:network.net
 
 ${ova_harbor_admin_password}  harbor-admin-passwd
 ${ova_harbor_db_password}  harbor-db-passwd
-${ova_service_options}  --prop:auth_mode="%{AUTH_MODE}" --prop:clair_db_password="%{CLAIR_DB_PASSWORD}" --prop:max_job_workers="%{MAX_JOB_WORKERS}" --prop:harbor_admin_password="%{HARBOR_ADMIN_PASSWORD}" --prop:db_password="%{DB_PASSWORD}"
+#${ova_service_options}  --prop:auth_mode="%{AUTH_MODE}" --prop:clair_db_password="%{CLAIR_DB_PASSWORD}" --prop:max_job_workers="%{MAX_JOB_WORKERS}" --prop:harbor_admin_password="%{HARBOR_ADMIN_PASSWORD}" --prop:db_password="%{DB_PASSWORD}"
 
-${ova_options}  ${ovftool_options} ${ova_appliance_options} ${ova_service_options}
-${ova_options_with_network}  ${ova_options} ${ova_network_options} 
+#${ova_options}  ${ovftool_options} ${ova_appliance_options} ${ova_service_options}
+#${ova_options_with_network}  ${ova_options} ${ova_network_options} 
 
 ${tls_not_disabled}  False
 

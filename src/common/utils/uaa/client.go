@@ -1,4 +1,4 @@
-// Copyright (c) 2017 VMware, Inc. All Rights Reserved.
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,30 +25,34 @@ import (
 	"os"
 	"strings"
 
-	"github.com/vmware/harbor/src/common/utils/log"
+	"github.com/goharbor/harbor/src/lib/log"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
 const (
-	//TokenURLSuffix ...
+	// TokenURLSuffix ...
 	TokenURLSuffix = "/oauth/token"
-	//AuthURLSuffix ...
+	// AuthURLSuffix ...
 	AuthURLSuffix = "/oauth/authorize"
-	//UserInfoURLSuffix ...
+	// UserInfoURLSuffix ...
 	UserInfoURLSuffix = "/userinfo"
-	//UsersURLSuffix ...
+	// UsersURLSuffix ...
 	UsersURLSuffix = "/Users"
 )
 
+var uaaTransport = &http.Transport{Proxy: http.ProxyFromEnvironment}
+
 // Client provides funcs to interact with UAA.
 type Client interface {
-	//PasswordAuth accepts username and password, return a token if it's valid.
+	// PasswordAuth accepts username and password, return a token if it's valid.
 	PasswordAuth(username, password string) (*oauth2.Token, error)
-	//GetUserInfoByToken send the token to OIDC endpoint to get user info, currently it's also used to validate the token.
+	// GetUserInfoByToken send the token to OIDC endpoint to get user info, currently it's also used to validate the token.
 	GetUserInfo(token string) (*UserInfo, error)
-	//SearchUser searches a user based on user name.
+	// SearchUser searches a user based on user name.
 	SearchUser(name string) ([]*SearchUserEntry, error)
+	// UpdateConfig updates the config of the current client
+	UpdateConfig(cfg *ClientConfig) error
 }
 
 // ClientConfig values to initialize UAA Client
@@ -57,7 +61,7 @@ type ClientConfig struct {
 	ClientSecret  string
 	Endpoint      string
 	SkipTLSVerify bool
-	//Absolut path for CA root used to communicate with UAA, only effective when skipTLSVerify set to false.
+	// Absolut path for CA root used to communicate with UAA, only effective when skipTLSVerify set to false.
 	CARootPath string
 }
 
@@ -72,13 +76,13 @@ type UserInfo struct {
 	Email    string `json:"email"`
 }
 
-//SearchUserEmailEntry ...
+// SearchUserEmailEntry ...
 type SearchUserEmailEntry struct {
 	Value   string `json:"value"`
 	Primary bool   `json:"primary"`
 }
 
-//SearchUserEntry is the struct of an entry of user within search result.
+// SearchUserEntry is the struct of an entry of user within search result.
 type SearchUserEntry struct {
 	ID       string                 `json:"id"`
 	ExtID    string                 `json:"externalId"`
@@ -87,20 +91,20 @@ type SearchUserEntry struct {
 	Groups   []interface{}
 }
 
-//SearchUserRes is the struct to parse the result of search user API of UAA
+// SearchUserRes is the struct to parse the result of search user API of UAA
 type SearchUserRes struct {
 	Resources    []*SearchUserEntry `json:"resources"`
 	TotalResults int                `json:"totalResults"`
 	Schemas      []string           `json:"schemas"`
 }
 
-// DefaultClient leverages oauth2 pacakge for oauth features
+// DefaultClient leverages oauth2 package for oauth features
 type defaultClient struct {
 	httpClient *http.Client
 	oauth2Cfg  *oauth2.Config
 	twoLegCfg  *clientcredentials.Config
 	endpoint   string
-	//TODO: add public key, etc...
+	// TODO: add public key, etc...
 }
 
 func (dc *defaultClient) PasswordAuth(username, password string) (*oauth2.Token, error) {
@@ -169,13 +173,13 @@ func (dc *defaultClient) prepareCtx() context.Context {
 	return context.WithValue(context.Background(), oauth2.HTTPClient, dc.httpClient)
 }
 
-// NewDefaultClient creates an instance of defaultClient.
-func NewDefaultClient(cfg *ClientConfig) (Client, error) {
+func (dc *defaultClient) UpdateConfig(cfg *ClientConfig) error {
 	url := cfg.Endpoint
 	if !strings.Contains(url, "://") {
 		url = "https://" + url
 	}
 	url = strings.TrimSuffix(url, "/")
+	dc.endpoint = url
 	tc := &tls.Config{
 		InsecureSkipVerify: cfg.SkipTLSVerify,
 	}
@@ -183,12 +187,12 @@ func NewDefaultClient(cfg *ClientConfig) (Client, error) {
 		if _, err := os.Stat(cfg.CARootPath); !os.IsNotExist(err) {
 			content, err := ioutil.ReadFile(cfg.CARootPath)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			pool := x509.NewCertPool()
-			//Do not throw error if the certificate is malformed, so we can put a place holder.
+			// Do not throw error if the certificate is malformed, so we can put a place holder.
 			if ok := pool.AppendCertsFromPEM(content); !ok {
-				log.Warningf("Failed to append certificate to cert pool, cert path: %s", cfg.CARootPath)
+				log.Warningf("Failed to append certificate to cert worker, cert path: %s", cfg.CARootPath)
 			} else {
 				tc.RootCAs = pool
 			}
@@ -196,11 +200,9 @@ func NewDefaultClient(cfg *ClientConfig) (Client, error) {
 			log.Warningf("The root certificate file %s is not found, skip configuring root cert in UAA client.", cfg.CARootPath)
 		}
 	}
-	hc := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tc,
-		},
-	}
+	uaaTransport.TLSClientConfig = tc
+	dc.httpClient.Transport = uaaTransport
+	// dc.httpClient.Transport = transport.
 
 	oc := &oauth2.Config{
 		ClientID:     cfg.ClientID,
@@ -216,11 +218,17 @@ func NewDefaultClient(cfg *ClientConfig) (Client, error) {
 		ClientSecret: cfg.ClientSecret,
 		TokenURL:     url + TokenURLSuffix,
 	}
+	dc.oauth2Cfg = oc
+	dc.twoLegCfg = cc
+	return nil
+}
 
-	return &defaultClient{
-		httpClient: hc,
-		oauth2Cfg:  oc,
-		twoLegCfg:  cc,
-		endpoint:   url,
-	}, nil
+// NewDefaultClient creates an instance of defaultClient.
+func NewDefaultClient(cfg *ClientConfig) (Client, error) {
+	hc := &http.Client{}
+	c := &defaultClient{httpClient: hc}
+	if err := c.UpdateConfig(cfg); err != nil {
+		return nil, err
+	}
+	return c, nil
 }

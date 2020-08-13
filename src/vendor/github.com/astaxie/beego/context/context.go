@@ -24,13 +24,11 @@ package context
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/hmac"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -38,6 +36,14 @@ import (
 	"time"
 
 	"github.com/astaxie/beego/utils"
+)
+
+//commonly used mime-types
+const (
+	ApplicationJSON = "application/json"
+	ApplicationXML  = "application/xml"
+	ApplicationYAML = "application/x-yaml"
+	TextXML         = "text/xml"
 )
 
 // NewContext return the Context with Input and Output
@@ -67,18 +73,18 @@ func (ctx *Context) Reset(rw http.ResponseWriter, r *http.Request) {
 	ctx.ResponseWriter.reset(rw)
 	ctx.Input.Reset(ctx)
 	ctx.Output.Reset(ctx)
+	ctx._xsrfToken = ""
 }
 
 // Redirect does redirection to localurl with http header status code.
-// It sends http response header directly.
 func (ctx *Context) Redirect(status int, localurl string) {
-	ctx.Output.Header("Location", localurl)
-	ctx.ResponseWriter.WriteHeader(status)
+	http.Redirect(ctx.ResponseWriter, ctx.Request, localurl, status)
 }
 
 // Abort stops this request.
 // if beego.ErrorMaps exists, panic body.
 func (ctx *Context) Abort(status int, body string) {
+	ctx.Output.SetStatus(status)
 	panic(body)
 }
 
@@ -117,7 +123,7 @@ func (ctx *Context) GetSecureCookie(Secret, key string) (string, bool) {
 	timestamp := parts[1]
 	sig := parts[2]
 
-	h := hmac.New(sha1.New, []byte(Secret))
+	h := hmac.New(sha256.New, []byte(Secret))
 	fmt.Fprintf(h, "%s%s", vs, timestamp)
 
 	if fmt.Sprintf("%02x", h.Sum(nil)) != sig {
@@ -131,7 +137,7 @@ func (ctx *Context) GetSecureCookie(Secret, key string) (string, bool) {
 func (ctx *Context) SetSecureCookie(Secret, name, value string, others ...interface{}) {
 	vs := base64.URLEncoding.EncodeToString([]byte(value))
 	timestamp := strconv.FormatInt(time.Now().UnixNano(), 10)
-	h := hmac.New(sha1.New, []byte(Secret))
+	h := hmac.New(sha256.New, []byte(Secret))
 	fmt.Fprintf(h, "%s%s", vs, timestamp)
 	sig := fmt.Sprintf("%02x", h.Sum(nil))
 	cookie := strings.Join([]string{vs, timestamp, sig}, "|")
@@ -163,14 +169,30 @@ func (ctx *Context) CheckXSRFCookie() bool {
 		token = ctx.Request.Header.Get("X-Csrftoken")
 	}
 	if token == "" {
-		ctx.Abort(403, "'_xsrf' argument missing from POST")
+		ctx.Abort(422, "422")
 		return false
 	}
 	if ctx._xsrfToken != token {
-		ctx.Abort(403, "XSRF cookie does not match POST argument")
+		ctx.Abort(417, "417")
 		return false
 	}
 	return true
+}
+
+// RenderMethodResult renders the return value of a controller method to the output
+func (ctx *Context) RenderMethodResult(result interface{}) {
+	if result != nil {
+		renderer, ok := result.(Renderer)
+		if !ok {
+			err, ok := result.(error)
+			if ok {
+				renderer = errorRenderer(err)
+			} else {
+				renderer = jsonRenderer(result)
+			}
+		}
+		renderer.Render(ctx)
+	}
 }
 
 //Response is a wrapper for the http.ResponseWriter
@@ -179,6 +201,7 @@ type Response struct {
 	http.ResponseWriter
 	Started bool
 	Status  int
+	Elapsed time.Duration
 }
 
 func (r *Response) reset(rw http.ResponseWriter) {
@@ -193,14 +216,6 @@ func (r *Response) reset(rw http.ResponseWriter) {
 func (r *Response) Write(p []byte) (int, error) {
 	r.Started = true
 	return r.ResponseWriter.Write(p)
-}
-
-// Copy writes the data to the connection as part of an HTTP reply,
-// and sets `started` to true.
-// started means the response has sent out.
-func (r *Response) Copy(buf *bytes.Buffer) (int64, error) {
-	r.Started = true
-	return io.Copy(r.ResponseWriter, buf)
 }
 
 // WriteHeader sends an HTTP response header with status code,
@@ -235,6 +250,14 @@ func (r *Response) Flush() {
 func (r *Response) CloseNotify() <-chan bool {
 	if cn, ok := r.ResponseWriter.(http.CloseNotifier); ok {
 		return cn.CloseNotify()
+	}
+	return nil
+}
+
+// Pusher http.Pusher
+func (r *Response) Pusher() (pusher http.Pusher) {
+	if pusher, ok := r.ResponseWriter.(http.Pusher); ok {
+		return pusher
 	}
 	return nil
 }

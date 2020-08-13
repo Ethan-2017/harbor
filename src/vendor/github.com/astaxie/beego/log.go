@@ -21,6 +21,7 @@ import (
 )
 
 // Log levels to control the logging output.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 const (
 	LevelEmergency = iota
 	LevelAlert
@@ -33,82 +34,92 @@ const (
 )
 
 // BeeLogger references the used application logger.
-var BeeLogger = logs.NewLogger(100)
+// Deprecated: use github.com/astaxie/beego/logs instead.
+var BeeLogger = logs.GetBeeLogger()
 
 // SetLevel sets the global log level used by the simple logger.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func SetLevel(l int) {
-	BeeLogger.SetLevel(l)
+	logs.SetLevel(l)
 }
 
 // SetLogFuncCall set the CallDepth, default is 3
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func SetLogFuncCall(b bool) {
-	BeeLogger.EnableFuncCallDepth(b)
-	BeeLogger.SetLogFuncCallDepth(3)
+	logs.SetLogFuncCall(b)
 }
 
 // SetLogger sets a new logger.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func SetLogger(adaptername string, config string) error {
-	err := BeeLogger.SetLogger(adaptername, config)
-	if err != nil {
-		return err
-	}
-	return nil
+	return logs.SetLogger(adaptername, config)
 }
 
 // Emergency logs a message at emergency level.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Emergency(v ...interface{}) {
-	BeeLogger.Emergency(generateFmtStr(len(v)), v...)
+	logs.Emergency(generateFmtStr(len(v)), v...)
 }
 
 // Alert logs a message at alert level.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Alert(v ...interface{}) {
-	BeeLogger.Alert(generateFmtStr(len(v)), v...)
+	logs.Alert(generateFmtStr(len(v)), v...)
 }
 
 // Critical logs a message at critical level.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Critical(v ...interface{}) {
-	BeeLogger.Critical(generateFmtStr(len(v)), v...)
+	logs.Critical(generateFmtStr(len(v)), v...)
 }
 
 // Error logs a message at error level.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Error(v ...interface{}) {
-	BeeLogger.Error(generateFmtStr(len(v)), v...)
+	logs.Error(generateFmtStr(len(v)), v...)
 }
 
 // Warning logs a message at warning level.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Warning(v ...interface{}) {
-	BeeLogger.Warning(generateFmtStr(len(v)), v...)
+	logs.Warning(generateFmtStr(len(v)), v...)
 }
 
 // Warn compatibility alias for Warning()
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Warn(v ...interface{}) {
-	BeeLogger.Warn(generateFmtStr(len(v)), v...)
+	logs.Warn(generateFmtStr(len(v)), v...)
 }
 
 // Notice logs a message at notice level.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Notice(v ...interface{}) {
-	BeeLogger.Notice(generateFmtStr(len(v)), v...)
+	logs.Notice(generateFmtStr(len(v)), v...)
 }
 
 // Informational logs a message at info level.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Informational(v ...interface{}) {
-	BeeLogger.Informational(generateFmtStr(len(v)), v...)
+	logs.Informational(generateFmtStr(len(v)), v...)
 }
 
 // Info compatibility alias for Warning()
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Info(v ...interface{}) {
-	BeeLogger.Info(generateFmtStr(len(v)), v...)
+	logs.Info(generateFmtStr(len(v)), v...)
 }
 
 // Debug logs a message at debug level.
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Debug(v ...interface{}) {
-	BeeLogger.Debug(generateFmtStr(len(v)), v...)
+	logs.Debug(generateFmtStr(len(v)), v...)
 }
 
 // Trace logs a message at trace level.
 // compatibility alias for Warning()
+// Deprecated: use github.com/astaxie/beego/logs instead.
 func Trace(v ...interface{}) {
-	BeeLogger.Trace(generateFmtStr(len(v)), v...)
+	logs.Trace(generateFmtStr(len(v)), v...)
 }
 
 func generateFmtStr(n int) string {

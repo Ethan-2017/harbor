@@ -162,7 +162,7 @@ func (e *Email) Bytes() ([]byte, error) {
 
 // AttachFile Add attach file to the send mail
 func (e *Email) AttachFile(args ...string) (a *Attachment, err error) {
-	if len(args) < 1 && len(args) > 2 {
+	if len(args) < 1 || len(args) > 2 { // change && to ||
 		err = errors.New("Must specify a file name and number of parameters can not exceed at least two")
 		return
 	}
@@ -175,6 +175,7 @@ func (e *Email) AttachFile(args ...string) (a *Attachment, err error) {
 	if err != nil {
 		return
 	}
+	defer f.Close()
 	ct := mime.TypeByExtension(filepath.Ext(filename))
 	basename := path.Base(filename)
 	return e.Attach(f, basename, ct, id)
@@ -183,7 +184,7 @@ func (e *Email) AttachFile(args ...string) (a *Attachment, err error) {
 // Attach is used to attach content from an io.Reader to the email.
 // Parameters include an io.Reader, the desired filename for the attachment, and the Content-Type.
 func (e *Email) Attach(r io.Reader, filename string, args ...string) (a *Attachment, err error) {
-	if len(args) < 1 && len(args) > 2 {
+	if len(args) < 1 || len(args) > 2 { // change && to ||
 		err = errors.New("Must specify the file type and number of parameters can not exceed at least two")
 		return
 	}
@@ -232,14 +233,16 @@ func (e *Email) Send() error {
 		return errors.New("Must specify at least one To address")
 	}
 
-	from, err := mail.ParseAddress(e.Username)
+	// Use the username if no From is provided
+	if len(e.From) == 0 {
+		e.From = e.Username
+	}
+
+	from, err := mail.ParseAddress(e.From)
 	if err != nil {
 		return err
 	}
 
-	if len(e.From) == 0 {
-		e.From = e.Username
-	}
 	// use mail's RFC 2047 to encode any string
 	e.Subject = qEncode("utf-8", e.Subject)
 
